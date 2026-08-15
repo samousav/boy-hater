@@ -112,10 +112,6 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not match:
         return
-
-    is_hate, points, reason = await check_man_hate(text)
-    if not is_hate:
-        return
     
     # ——— Cooldown check ———
     key = (user.id, chat.id)
@@ -130,10 +126,17 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"آروم باش 😈 هنوز {minutes}:{seconds:02d} تا فحش بعدی مونده"
             )
             return
+
+    is_hate, points, reason = await check_man_hate(text)
+    if not is_hate:
+        return
+    
+    # Print evaluation details to your console
+    print(f"📩 [{chat.title}] {user.first_name}: {text}")
+    print(f"🤖 Result -> is_hate: {is_hate} | Points: {points} | Reason: '{reason}'")
         
     last_swear_time[key] = now
 
-    matched_word = match.group(1).strip()
     increase_swears_and_points(user.id, chat.id, points)
     reply_caption = (
         f"{random.choice(texts)} {text}!\n"

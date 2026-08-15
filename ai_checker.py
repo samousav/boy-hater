@@ -1,52 +1,61 @@
-from openai import OpenAI, AsyncOpenAI
+import os
+import json
+import random
+from openai import AsyncOpenAI, RateLimitError, APIError
 from dotenv import load_dotenv
-import os, json, random
 
 load_dotenv()
 
+# Check for both common environment variable names
+api_key = os.getenv("GEMINI_KEY") or os.getenv("GEMINI_API_KEY")
+
 client = AsyncOpenAI(
-    api_key=os.getenv("ANYAPI_KEY"),
-    base_url="https://api.anyapi.ai/v1"
+    api_key=api_key,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 SYSTEM_PROMPT = """
 You are an expert satirical judge for a Persian Telegram game bot.
-Your job is to evaluate whether a user's Persian message roasts, insults, mocks, or shows hostility towards men/boys (مرد / پسر / نر), and assign a creativity score from 5 to 20.
+Evaluate whether a user's Persian message roasts, insults, mocks, or shows hostility towards men/boys (مرد / پسر / نر), and assign points from 5 to 20.
 
-### Persona & Tone for "reason":
-Write the "reason" strictly in authentic, sarcastic Iranian youth street slang (فارسی کاملاً محاوره‌ای، اسلنگ و تیکه‌انداز). Sound like a sharp-witted Persian Telegram admin using internet slang (e.g., سم خالص، دمت گرم، پودر شد، خز، اسید، سوزش، پشمام، رنده‌ش کردی). Keep it to ONE short, punchy sentence.
+### CRITICAL RULES:
+1. "reason" MUST NEVER BE EMPTY if "is_target" is true. Write a punchy 1-sentence sarcastic commentary in heavy Iranian street slang (فارسی کوچه بازاری/تلگرامی).
+2. Generate "reason" FIRST.
 
-### Scoring Rubric & Reason Guidance:
-- 5 to 8 points: Low-effort, generic, or repetitive curses.
-  - Reason vibe: Mock their lack of effort (e.g., "خیلی خز و دم‌دستی بود، ولی کارت راه افتاد", "فحش خنکی بود، یکم خلاقیت چاشنیش کن").
-- 9 to 14 points: Clever punchlines, contextual banter, or decent teasing.
-  - Reason vibe: Sarcastic approval (e.g., "بد تیکه‌ای ننداختی، قشنگ سوزوندیش", "حق گفتی، حال کردم").
-- 15 to 20 points: Ultra-creative, brutal, top-tier roasts.
-  - Reason vibe: Mind-blown hype (e.g., "پشمام عجب تیکه‌ای بود، طرف با خاک یکسان شد!", "اسید خالص بود، قشنگ رنده‌ش کردی دمت گرم").
-- 0 points: Not an insult targeting men (neutral, praising, or unrelated).
-  - points: 0, reason: ""
+### Examples:
+Input: "این پسرا چقدر هولن واقعا"
+Output: {"reason": "حق گفتی ولی خیلی دم‌دستی و خز بود!", "is_target": true, "points": 7}
 
-### Output Requirement:
-Respond with ONLY a raw, valid JSON object matching this schema:
+Input: "مردا اگه عقل داشتن که اسمشون مرد نبود"
+Output: {"reason": "پشمام عجب تیکه‌ای، قشنگ با خاک یکسانشون کردی!", "is_target": true, "points": 16}
+
+Input: "امروز هوا خیلی خوبه"
+Output: {"reason": "", "is_target": false, "points": 0}
+
+### Output JSON Schema:
 {
+  "reason": "<string: short slang Persian reaction>",
   "is_target": true | false,
-  "points": <integer from 5 to 20 if is_target is true, otherwise 0>,
-  "reason": "<one short, funny, slang-ish Persian sentence>"
+  "points": <integer 5 to 20, or 0>
 }
 """
 
-async def check_man_hate(text: str) -> tuple[bool, int]:
+
+
+async def check_man_hate(text: str) -> tuple[bool, int, str]:
     try:
         response = await client.chat.completions.create(
-            model="anthropic/claude-sonnet-5",
+            model="gemini-3.7-flash",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": text}
-            ]
+            ],
+            response_format={"type": "json_object"}
         )
 
         raw_output = response.choices[0].message.content.strip()
 
+        # Strip markdown fences if present
         if raw_output.startswith("```"):
             raw_output = raw_output.split("```")[1]
             if raw_output.startswith("json"):
@@ -56,14 +65,21 @@ async def check_man_hate(text: str) -> tuple[bool, int]:
         data = json.loads(raw_output)
         is_target = bool(data.get("is_target", False))
         points = int(data.get("points", 0))
-        reason = data.get("reason", "")
+        reason = str(data.get("reason", "")).strip()
 
         if is_target:
             points = max(5, min(20, points if points >= 5 else 5))
+            if not reason:
+                reason = "دمت گرم!"
             return True, points, reason
 
-        return False, 0
+        return False, 0, ""
+
+    except (RateLimitError, APIError) as e:
+        print(f"⚠️ [Gemini API Issue]: {e}")
+        # Return fallback points + fallback reason so the bot always responds
+        return True, random.randint(7, 15), "دمت گرم!"
 
     except Exception as e:
-        print(f"AI Check Error: {e}")
-        return False, 0
+        print(f"⚠️ [Unexpected Error]: {e}")
+        return True, random.randint(5, 12), "دمت گرم!"
