@@ -20,17 +20,34 @@ from database import (
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from texts import prompts, opposite_prompts, texts
+from texts import prompts, texts
+from ai_checker import check_man_hate
 import os, random, re
+
+
+
+
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+ADMIN = os.getenv("ADMIN")
 
-pattern = re.compile("|".join(map(re.escape, prompts)))
-opposite_pattern = re.compile("|".join(map(re.escape, opposite_prompts)))
+sorted_variants = sorted(prompts, key=len, reverse=True)
+
+# Build regex pattern supporting standard spaces and Persian half-spaces (\u200c)
+escaped_variants = [
+    re.escape(word).replace(r"\ ", r"[\s\u200c]+").replace(r"\u200c", r"[\s\u200c]?")
+    for word in sorted_variants
+]
+
+# Boundary pattern ensuring it matches whole words, not random substrings
+PATTERN = re.compile(
+    rf"(?:^|[^\w\u200c])({'|'.join(escaped_variants)})(?:$|[^\w\u200c])",
+    re.UNICODE
+)
 
 
-COOLDOWN = timedelta(minutes=5)
+COOLDOWN = timedelta(minutes=4)
 last_swear_time: dict[tuple[int, int], datetime] = {}
 
 app = Application.builder().token(TOKEN).build()
@@ -58,6 +75,7 @@ async def add_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "شروع کنید 😈"
             )
         )
+        await context.bot.send_message(chat_id=ADMIN, text=f"👤 <b>{result.from_user.first_name} Added the bot to group</b> \n{chat.title}")
 
 
     except Exception:
@@ -90,9 +108,13 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     text = message.text
 
-    match = pattern.search(text)
+    match = PATTERN.search(text)
 
     if not match:
+        return
+
+    is_hate, points, reason = await check_man_hate(text)
+    if not is_hate:
         return
     
     # ——— Cooldown check ———
@@ -111,11 +133,21 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     last_swear_time[key] = now
 
-    matched = match.group(0)
-    points = random.randint(5, 20)
+    matched_word = match.group(1).strip()
     increase_swears_and_points(user.id, chat.id, points)
-    await message.reply_text(f"{random.choice(texts)} {matched}!\n{points} امتیاز گرفتی 🔥")
-
+    reply_caption = (
+        f"{random.choice(texts)} {text}!\n"
+        f"🔥 <b>+{points} امتیاز گرفتی!</b>"
+    )
+    if reason:
+        reply_caption += f"\n💡 <i>{reason}</i>"
+    await message.reply_text(reply_caption, parse_mode="HTML")
+    if ADMIN:
+        await context.bot.send_message(
+            chat_id=ADMIN,
+            text=f"👤 <b>{user.first_name}</b> roasted in <b>{chat.title}</b> (+{points} pts)\nText: <code>{text}</code>",
+            parse_mode="HTML"
+        )
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -139,11 +171,9 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"👤 <b>پروفایل {user.first_name}</b>\n"
-        f"━━━━━━━━━━━━━━\n"
         f"🔥 امتیاز: <b>{stats['points']}</b>\n"
         f"🤬 تعداد فحش: <b>{stats['swear_count']}</b>\n"
         f"🏆 رتبه: <b>{stats['rank']}</b> از {stats['total']}\n"
-        f"━━━━━━━━━━━━━━"
     )
     await message.reply_text(text, parse_mode="HTML")
 
