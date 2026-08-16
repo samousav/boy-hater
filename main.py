@@ -127,7 +127,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    is_hate, points, reason = await check_man_hate(text)
+    is_hate, points, reason = await check_man_hate(text, bot=context.bot)
     if not is_hate:
         return
     
