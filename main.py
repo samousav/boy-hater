@@ -146,7 +146,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     waiting_message = await message.reply_text("وایسا چک کنم...")
     await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-    is_hate, points, reason, model_name = await check_man_hate(text, bot=context.bot)
+    is_hate, points, reason, model_name = await check_man_hate(text, user.first_name, bot=context.bot)
     if not is_hate:
         await waiting_message.edit_text("ای بابا. منتظر یه فحش آبدار بودما!")
         return

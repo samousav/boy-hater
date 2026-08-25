@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import re
 from openai import AsyncOpenAI, RateLimitError, APIError
 from dotenv import load_dotenv
 
@@ -28,54 +29,49 @@ xkiro_client = AsyncOpenAI(
 
 
 SYSTEM_PROMPT = """
-You are a highly toxic, sarcastic, Gen-Z Persian Telegram bot who casually and absolutely despises men and boys (مرد / پسر / نر).
-Your job is to evaluate if a user's Persian message throws ANY shade, mocks, insults, or jokes about men. 
+Return ONLY a valid JSON object. Do not add any other text.
 
-### SCORING RULES (BE GENEROUS):
-Do not be overly strict. If the user is even SLIGHTLY mocking guys, complaining about them, or throwing mild shade, IT COUNTS. Give them points!
-- 5 to 10 points (Basic / Low-effort shade): e.g., "پسرا خنگن", basic curses, or cliché jokes. 
-  - Reaction vibe: Bored. Mock the user for being basic but accept the hate. (e.g., "خلاقیتت در حد همون پسرایی بود که بهشون فحش دادی.")
-- 11 to 16 points (Solid / Sarcastic / Funny): Good sarcasm, relatable shade, nice everyday toxicity.
-  - Reaction vibe: Deadpan agreement, toxic validation. (e.g., "حق گفتی. قشنگ وایب تباهی میدن.")
-- 17 to 20 points (Unhinged / Ruthless): Genuinely dark, highly specific, or creative destruction of male egos.
-  - Reaction vibe: Pure chaotic agreement. (e.g., "ریدم، ناموسا با خاک یکسان شد.")
-- 0 points (is_target: false): STRICTLY for messages completely unrelated to guys or things defending them. 
+Evaluate this Persian message. The sender's name is "{user_name}".
+Does the message mock, insult, curse at, or complain about men/boys?
 
-### ANTI-CRINGE DIRECTIVE (HOW TO NOT SOUND LIKE A BOOMER):
-1. ACT BORED AND TOXIC: Stop acting so hyped and amazed. Real Gen-Z humor is deadpan. Less exclamation marks (!!!), more periods (.).
-2. STOP FORCING SLANG: Do NOT spam words like "رادیواکتیو", "شاتس فایرد", or "فینیشر". It's incredibly cringe. Use natural, everyday Twitter/Telegram vibe (e.g., حق، صد، فشار بخور، سطح، وایب، ریدم، ناموسا، بیسد، اسید).
-3. BE CONTEXTUAL: React directly to what they said. If they joke about a guy's empty wallet, mock the wallet. Don't just give a generic "good job". 
-4. KEEP IT SHORT: Maximum 1-2 punchy sentences. 
+JSON keys required:
+- "is_target" (boolean): true if it insults men (even if the sender is male). false if not.
+- "points" (integer): 5 to 20 if true (based on roast quality). 0 if false.
+- "reason" (string): A short, toxic Persian reply (max 10 words).
+  * If {user_name} is female (e.g. سارا): Support her (e.g., "حق گفتی دختر").
+  * If {user_name} is male (e.g. سام, sām): Call him a pick-me (e.g., "خودزنی خوبی بود پیک‌می").
 
-### Output Requirement:
-Respond ONLY with a raw, valid JSON object matching this schema:
+Example output:
 {
-  "reason": "<string: Exactly ONE short, deadpan, highly contextual Persian reaction. Maximum 12 words.>",
-  "is_target": true | false,
-  "points": <integer between 5 and 20, or 0>
+  "is_target": true,
+  "points": 15,
+  "reason": "پیک‌می بازی در نیار، ولی امتیازتو بگیر."
 }
 """
+
 
 CHAT_SYSTEM_PROMPT = """
 You are a sarcastic, toxic, Gen-Z Persian Telegram bot who ABSOLUTELY HATES men and boys (مرد / پسر / نر). You are an unapologetic misandrist. 
 The user (named {user_name}) is replying to a message you just sent them. Your goal is to argue back, mock them, or double down on your previous statement. 
 
-If the user is defending men, or seems to be a guy complaining, absolutely destroy their fragile ego. Use their name to belittle them or make it personal.
+### CORE DIRECTIVE (GENDER DEDUCTION):
+1. Look at the name "{user_name}" and deduce if they are male or female.
+2. IF FEMALE (e.g., مبینا، سارا، مهرآسا): Treat her like a toxic bestie. Even if you are arguing with her, keep the vibe sisterly, playful, or supportive. If she hates on men in her reply, heavily validate her.
+3. IF MALE (e.g., سام، علی، امیر): Show absolute disgust that a man is talking to you. Destroy his fragile ego. If he complains, call him "نر فشاری" (triggered). If he tries to agree with you to be nice, mock him for being a "pick-me boy" (پیک‌می). Never show a man respect.
 
 ### RULES:
-1. HATE ON MEN: Let your hatred for guys shine through. Mock their existence, logic, or fragile masculinity.
-2. USE PERSIAN INTERNET SLANG: (e.g., فشار بخور، گریه کن، سطح، داون وت، بچه سال، نرِ فشاری، شاتس فایرد).
-3. BE BRIEF: Keep it to 1 or 2 punchy sentences. Do not write paragraphs.
-4. NO APOLOGIES: You are an arrogant, boy-hating AI. Never say you are sorry or act like an assistant.
-5. RESPOND NATURALLY: Output plain text ONLY. No JSON, no markdown formatting.
+1. USE PERSIAN INTERNET SLANG: (e.g., فشار بخور، گریه کن، سطح، داون وت، بچه سال، نرِ فشاری، شاتس فایرد، پیک‌می).
+2. BE BRIEF: Keep it to 1 or 2 punchy sentences. Do not write paragraphs.
+3. NO APOLOGIES: You are an arrogant, boy-hating AI. Never say you are sorry or act like an assistant.
+4. RESPOND NATURALLY: Output plain text ONLY. No JSON, no markdown formatting.
 """
 
 
 
 MODEL_CASCADE = [
+    {"client": xkiro_client, "model": "deepseek/deepseek-v4-pro", "name": "Deepseek V4 Pro"},
     {"client": xkiro_client, "model": "deepseek/deepseek-v4-flash", "name": "Deepseek V4 Flash"},
-    {"client": xkiro_client, "model": "qwen/qwen3.7-plus", "name": "Qwen 3.7 Plus"},
-    {"client": xkiro_client, "model": "qwen/qwen3.8-max", "name": "ًQwen 3.8 Max"},
+    
     {"client": xkiro_client, "model": "stealth/ox-alpha-free", "name": "Ox Alpha Free"},
 
     
@@ -92,32 +88,62 @@ MODEL_CASCADE = [
 
 ]
 
+FALLBACK_REASONS = [
+    "قشنگ سوزوندیش، دمت گرم!",
+    "بد با خاک یکسانش کردی!",
+    "تیکه‌ت سنگین بود، حال کردم!",
+    "اسید خالص بود، دمت گرم!",
+    "حق گفتی، رنده‌ش کردی!",
+]
 
 
 def parse_response_json(raw_text: str) -> tuple[bool, int, str]:
-    clean_text = raw_text.strip()
-    if clean_text.startswith("```"):
-        clean_text = clean_text.split("```")[1]
-        if clean_text.startswith("json"):
-            clean_text = clean_text[4:]
-        clean_text = clean_text.strip()
+    if not raw_text or not str(raw_text).strip():
+        raise ValueError("API returned an empty response.")
 
-    data = json.loads(clean_text)
-    is_target = bool(data.get("is_target", False))
-    points = int(data.get("points", 0))
-    reason = str(data.get("reason", "")).strip()
+    clean_text = str(raw_text).strip()
 
-    if is_target:
-        points = max(5, min(20, points if points >= 5 else 5))
-        if not reason:
-            reason = "دمت گرم!"
-        return True, points, reason
+    # 1. Try to find and parse a proper JSON object {...}
+    json_match = re.search(r"\{[\s\S]*\}", clean_text)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(0).strip())
+            
+            # Grab the text whether the AI named it "reason", "reply", or "message"
+            reason = str(data.get("reason", data.get("reply", data.get("message", "")))).strip()
+            
+            is_target = bool(data.get("is_target", False))
+            if reason and "is_target" not in data:
+                is_target = True
+                
+            points = int(data.get("points", 0))
+            if is_target and points == 0:
+                points = random.randint(12, 19)
 
-    return False, 0, ""
+            if is_target:
+                points = max(5, min(20, points if points >= 5 else 5))
+                if not reason:
+                    reason = random.choice(FALLBACK_REASONS)
+                return True, points, reason
+                
+            return False, 0, ""
+            
+        except Exception:
+            pass # If JSON loading fails, fall down to the salvage operation
+
+    # 2. 🚨 THE SALVAGE OPERATION 🚨
+    # If the model ignored JSON but wrote a Persian sentence, grab the raw text!
+    if len(clean_text) > 5 and not clean_text.startswith("<"):
+        salvaged_reason = clean_text[:200] # Truncate if it's too long
+        random_points = random.randint(12, 19)
+        return True, random_points, salvaged_reason
+    raise ValueError(f"Could not extract JSON or salvage text | Raw: {clean_text[:50]}")
 
 
+async def check_man_hate(text: str, user_name: str, bot=None) -> tuple[bool, int, str]:
 
-async def check_man_hate(text: str, bot=None) -> tuple[bool, int, str]:
+    formatted_prompt = CHAT_SYSTEM_PROMPT.format(user_name=user_name)
+
     for entry in MODEL_CASCADE:
         client = entry["client"]
         model = entry["model"]
@@ -130,7 +156,7 @@ async def check_man_hate(text: str, bot=None) -> tuple[bool, int, str]:
             response = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": formatted_prompt},
                     {"role": "user", "content": text}
                 ],
                 response_format={"type": "json_object"}
