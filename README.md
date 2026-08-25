@@ -5,7 +5,7 @@
 
 ## 📖 The Lore
 
-This chronically online masterpiece exists for one reason only: my friend **Mehraban** ([@mallaban](https://www.google.com/search?q=https://t.me/mallaban)) woke up, chose violence, and explicitly told me to build a bot that rewards people for roasting guys. I was told to let her cook, so here we are. It is literally a gamified toxicity engine. You're welcome.
+This chronically online masterpiece exists for one reason only: my friend **Mehraban** ([@mallaban on Telegram](https://t.me/mallaban)) woke up, chose violence, and explicitly told me to build a bot that rewards people for roasting guys. I was told to let her cook, so here we are. It is literally a gamified toxicity engine. You're welcome.
 
 ## ✨ Unhinged Features
 
