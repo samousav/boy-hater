@@ -157,3 +157,10 @@ def get_top_users(group_id: int, limit: int = 10):
             .limit(limit)
             .all()
         )
+
+
+def get_all_groups():
+    with Session() as session:
+        groups = session.query(Group).order_by(Group.total_points.desc()).all()
+        return groups
+

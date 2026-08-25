@@ -6,7 +6,9 @@ from telegram.ext import (
     filters,
     ContextTypes,
     ChatMemberHandler,
+    ConversationHandler,
 )
+from telegram.error import RetryAfter, Forbidden, BadRequest
 from database import (
     Group,
     User,
@@ -15,18 +17,15 @@ from database import (
     create_group,
     increase_swears_and_points,
     get_user_stats,
-    get_top_users
+    get_top_users,
+    get_all_groups,
 )
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from texts import prompts, texts
 from ai_checker import check_man_hate
-import os, random, re
-
-
-
-
+import os, random, re, asyncio
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -42,8 +41,7 @@ escaped_variants = [
 
 # Boundary pattern ensuring it matches whole words, not random substrings
 PATTERN = re.compile(
-    rf"(?:^|[^\w\u200c])({'|'.join(escaped_variants)})(?:$|[^\w\u200c])",
-    re.UNICODE
+    rf"(?:^|[^\w\u200c])({'|'.join(escaped_variants)})(?:$|[^\w\u200c])", re.UNICODE
 )
 
 
@@ -57,7 +55,9 @@ create_tables()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type != "private":
         return
-    await update.message.reply_text("سلام. من یه باتم که از پسرا متنفره، واسه همین به هر توهینی به پسرا بهتون امتیاز میدم. شروع کن و منو به یه گروه اضافه کن.")
+    await update.message.reply_text(
+        "سلام. من یه باتم که از پسرا متنفره، واسه همین به هر توهینی به پسرا بهتون امتیاز میدم. شروع کن و منو به یه گروه اضافه کن."
+    )
 
 
 async def add_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -73,14 +73,15 @@ async def add_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "سلام! خوشحالم که منو به گروهتون اضافه کردید.\n"
                 "من از پسرا متنفرم و به هر توهینی به پسرا امتیاز میدم.\n"
                 "شروع کنید 😈"
-            )
+            ),
         )
-        await context.bot.send_message(chat_id=ADMIN, text=f"👤 <b>{result.from_user.first_name} Added the bot to group</b> \n{chat.title}")
-
+        await context.bot.send_message(
+            chat_id=ADMIN,
+            text=f"👤 <b>{result.from_user.first_name} Added the bot to group</b> \n{chat.title}",
+        )
 
     except Exception:
         pass
-
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,14 +92,16 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat = message.chat
     user = message.from_user
-    
+
     if chat.type == "private":
-        await update.message.reply_text("منو اد کن تو گروه بعد حرف بزن. اینجوری نمیفهمم چی میگی. blah blah blah")
+        await update.message.reply_text(
+            "منو اد کن تو گروه بعد حرف بزن. اینجوری نمیفهمم چی میگی. blah blah blah"
+        )
         return
-    
+
     if chat.type not in ("group", "supergroup"):
         return
-    
+
     create_group(chat.id, chat.title or "Unknown")
     create_user(
         user_id=user.id,
@@ -112,14 +115,14 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not match:
         return
-    
+
     # ——— Cooldown check ———
     key = (user.id, chat.id)
     now = datetime.now(ZoneInfo("Asia/Tehran"))
     if key in last_swear_time:
         elapsed = now - last_swear_time[key]
         if elapsed < COOLDOWN:
-            remaining = COOLDOWN - elapsed  
+            remaining = COOLDOWN - elapsed
             minutes = int(remaining.total_seconds() // 60)
             seconds = int(remaining.total_seconds() % 60)
             await message.reply_text(
@@ -127,30 +130,33 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    is_hate, points, reason = await check_man_hate(text, bot=context.bot)
+    waiting_message = await message.reply_text("وایسا چک کنم...")
+
+    is_hate, points, reason, model_name = await check_man_hate(text, bot=context.bot)
     if not is_hate:
+        await waiting_message.edit_text("ای بابا. منتظر یه فحش آبدار بودما!")
         return
-    
+
     # Print evaluation details to your console
     print(f"📩 [{chat.title}] {user.first_name}: {text}")
     print(f"🤖 Result -> is_hate: {is_hate} | Points: {points} | Reason: '{reason}'")
-        
+
     last_swear_time[key] = now
 
     increase_swears_and_points(user.id, chat.id, points)
     reply_caption = (
-        f"{random.choice(texts)} {text}!\n"
-        f"🔥 <b>+{points} امتیاز گرفتی!</b>"
+        f"{random.choice(texts)} {text}!\n" f"🔥 <b>+{points} امتیاز گرفتی!</b>"
     )
     if reason:
         reply_caption += f"\n💡 <i>{reason}</i>"
-    await message.reply_text(reply_caption, parse_mode="HTML")
+    await waiting_message.edit_text(reply_caption, parse_mode="HTML")
     if ADMIN:
         await context.bot.send_message(
             chat_id=ADMIN,
-            text=f"👤 <b>{user.first_name}</b> roasted in <b>{chat.title}</b> (+{points} pts)\nText: <code>{text}</code>",
-            parse_mode="HTML"
+            text=f"👤 <b>{user.first_name}</b> roasted in <b>{chat.title}</b> (+{points} pts)\nText: <code>{text}</code>\nUsed model: {model_name}",
+            parse_mode="HTML",
         )
+
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -163,7 +169,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("این دستور فقط داخل گروه کار می‌کنه 👀")
         return
 
-    stats =  get_user_stats(user.id, chat.id)
+    stats = get_user_stats(user.id, chat.id)
     if not stats or (stats["points"] == 0 and stats["swear_count"] == 0):
         await message.reply_text(
             "هنوز هیچ امتیازی تو این گروه نداری 😴\n"
@@ -171,7 +177,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    
     text = (
         f"👤 <b>پروفایل {user.first_name}</b>\n"
         f"🔥 امتیاز: <b>{stats['points']}</b>\n"
@@ -222,17 +227,162 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(text, parse_mode="HTML")
 
 
+WAITING_FOR_MESSAGE = 1
+
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    if str(user.id) != str(ADMIN):
+        await update.message.reply_text("You ain't admin nigga")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "📢 <b>حالت پیام همگانی فعال شد.</b>\n\n"
+        "متن، عکس، ویدیو، استیکر یا هرچیزی که میخوای رو الان بفرست تا برای همه گروه‌ها کپی کنم.\n"
+        "اگه پشیمون شدی /cancel رو بزن.",
+        parse_mode="HTML",
+    )
+    return WAITING_FOR_MESSAGE
+
+
+async def send_to_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    all_groups = get_all_groups()
+    group_ids = [group.id for group in all_groups]
+
+    total = len(group_ids)
+    if total == 0:
+        await message.reply_text("بات هنوز تو هیچ گروهی عضو نیست 🤷‍♂️")
+        return ConversationHandler.END
+
+    status_message = await message.reply_text(f"⏳ در حال ارسال به {total} گروه...")
+
+    success_count = 0
+    kicked_count = 0
+    failed_count = 0
+
+    for i, group_id in enumerate(group_ids, start=1):
+        try:
+            await context.bot.copy_message(
+                chat_id=group_id,
+                from_chat_id=message.chat_id,
+                message_id=message.message_id,
+            )
+            success_count += 1
+
+        except RetryAfter as e:
+            # If Telegram throttles, wait the exact required seconds and retry
+            print(f"Flood limit reached. Sleeping for {e.retry_after}s")
+            await asyncio.sleep(e.retry_after)
+            try:
+                await context.bot.copy_message(
+                    chat_id=group_id,
+                    from_chat_id=message.chat_id,
+                    message_id=message.message_id,
+                )
+                success_count += 1
+            except Exception:
+                failed_count += 1
+
+        except (Forbidden, BadRequest) as e:
+            # Bot was kicked, group was deleted, or bot has no send permissions
+            print(f"Cannot send to group {group_id}: {e}")
+            kicked_count += 1
+
+        except Exception as e:
+            print(f"Unexpected error sending to {group_id}: {e}")
+            failed_count += 1
+
+        # Small 50ms pause between messages (~20 msgs/sec, well within 30 msg/sec limit)
+        await asyncio.sleep(0.05)
+
+        # Update progress status every 30 groups so you know it's working
+        if i % 30 == 0 or i == total:
+            try:
+                await status_message.edit_text(
+                    f"⏳ در حال ارسال... ({i}/{total})\n"
+                    f"✅ موفق: {success_count} | 🚫 کیک‌شده: {kicked_count}"
+                )
+            except Exception:
+                pass
+
+    await status_message.edit_text(
+        f"✅ <b>ارسال همگانی تکمیل شد!</b>\n\n"
+        f"👥 کل گروه‌ها: {total}\n"
+        f"🎯 موفق: {success_count}\n"
+        f"🚫 کیک شده/دسترسی محدود: {kicked_count}\n"
+        f"❌ خطای متفرقه: {failed_count}",
+        parse_mode="HTML",
+    )
+    return ConversationHandler.END
+
+
+async def cancel_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚫 ارسال همگانی لغو شد.")
+    return ConversationHandler.END
+
+
+async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+
+    # Fetch the exact same sorted groups
+    all_groups = get_all_groups()
+
+    if not all_groups:
+        await message.reply_text("هنوز هیچ گروهی ثبت نشده 😴")
+        return
+
+    lines = ["🏆 <b>رتبه‌بندی سمی‌ترین گروه‌ها</b>\n"]
+    medals = ["🥇", "🥈", "🥉"]
+
+    # Grab only the top 10 groups
+    for i, group in enumerate(all_groups[:10], start=1):
+        # Format the medal or number
+        prefix = medals[i - 1] if i <= 3 else f"{i}."
+
+        lines.append(f"{prefix} <b>{group.title}</b>\n" f"  🔥 {group.total_points} امتیاز")
+
+    text = "\n".join(lines)
+    await message.reply_text(text, parse_mode="HTML")
+
+
+broadcast_handler = ConversationHandler(
+    entry_points=[CommandHandler("broadcast", broadcast)],
+    states={
+        WAITING_FOR_MESSAGE: [
+            MessageHandler(filters.ALL & ~filters.COMMAND, send_to_all)
+        ]
+    },
+    fallbacks=[CommandHandler("cancel", cancel_broadcast)],
+)
+
+app.add_handler(broadcast_handler)
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("profile", profile))
-app.add_handler(MessageHandler(
-    filters.TEXT & filters.Regex(r"^پروفایل$") & ~filters.COMMAND,
-    profile
-))
+app.add_handler(
+    MessageHandler(
+        filters.TEXT & filters.Regex(r"^پروفایل$") & ~filters.COMMAND, profile
+    )
+)
 app.add_handler(CommandHandler(["top", "leaderboard"], leaderboard))
-app.add_handler(MessageHandler(
-    filters.TEXT & filters.Regex(r"^(تاپ|لیدربورد|رتبه بندی|رتبه‌بندی)$") & ~filters.COMMAND,
-    leaderboard
-))
+app.add_handler(
+    MessageHandler(
+        filters.TEXT
+        & filters.Regex(r"^(تاپ|لیدربورد|رتبه بندی|رتبه‌بندی)$")
+        & ~filters.COMMAND,
+        leaderboard,
+    )
+)
+app.add_handler(CommandHandler(["grouptop", "topgroups"], global_leaderboard))
+app.add_handler(
+    MessageHandler(
+        filters.TEXT
+        & filters.Regex(
+            r"^(تاپ گروه ها|تاپ گروه‌ها|رتبه بندی گروه ها|رتبه‌بندی گروه‌ها)$"
+        )
+        & ~filters.COMMAND,
+        global_leaderboard,
+    )
+)
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 app.add_handler(ChatMemberHandler(add_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
 
