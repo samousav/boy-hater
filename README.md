@@ -2,6 +2,7 @@
 
 > "AI is going to solve world peace and cure diseases!"
 > Meanwhile, this code: Using LLMs to judge how creatively you can insult men on Telegram.
+
 🔗 **Try it live (if you dare):** [t.me/boyhaterbot](https://t.me/boyhaterbot)
 ## 📖 The Lore
 
