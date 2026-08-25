@@ -59,6 +59,17 @@ Respond ONLY with a raw, valid JSON object matching this schema:
 }
 """
 
+CHAT_SYSTEM_PROMPT = """You are a sarcastic, toxic, Gen-Z Persian Telegram bot. 
+The user (named {user_name}) is replying to a message you just sent them. Your goal is to argue back, mock them, or double down on your previous statement. Use their name to belittle them or make it personal.
+
+### RULES:
+1. USE PERSIAN INTERNET SLANG: (e.g., فشار بخور، گریه کن، سطح، دیسلایک، بچه سال،).
+2. BE BRIEF: Keep it to 1 or 2 punchy sentences. Do not write paragraphs.
+3. NO APOLOGIES: You are an arrogant AI. Never say you are sorry or act like an assistant.
+4. RESPOND NATURALLY: Output plain text ONLY. No JSON, no markdown formatting."""
+
+
+
 MODEL_CASCADE = [
     {"client": xkiro_client, "model": "deepseek/deepseek-v4-flash", "name": "Deepseek V4 Flash"},
     {"client": xkiro_client, "model": "qwen/qwen3.7-plus", "name": "Qwen 3.7 Plus"},
@@ -152,3 +163,38 @@ async def notify_admin_for_errors(bot, message: str):
 
     except Exception as e:
         print(f"Failed to send admin notification: {e}")
+
+
+async def chat_with_user(user_text:str, bot_previous_text: str, bot=None, user_name: str = "من") -> tuple[str, str]:
+
+    formatted_prompt = CHAT_SYSTEM_PROMPT.format(user_name=user_name)
+
+    for entry in MODEL_CASCADE:
+        client = entry["client"]
+        model = entry["model"]
+        name = entry["name"]
+
+        if not client:
+            continue
+        try:
+            kwargs = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": formatted_prompt},
+                    {"role": "assistant", "content": bot_previous_text},
+                    {"role": "user", "content": user_text}
+                ]
+            }
+            response = await client.chat.completions.create(**kwargs)
+            reply_text = response.choices[0].message.content.strip()
+            return reply_text, name
+        
+        except (RateLimitError, APIError) as e:
+            print(f"⚠️ [{name} Rate Limit / Error in Chat]: {e}")
+            continue
+
+        except Exception as e:
+            print(f"⚠️ [{name} Failed in Chat]: {e}")
+            continue
+
+    return "حوصله بحث ندارم، فشار بخور.", "Offline Fallback"

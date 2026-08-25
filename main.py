@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from texts import prompts, texts
-from ai_checker import check_man_hate
+from ai_checker import check_man_hate, chat_with_user
 import os, random, re, asyncio
 
 load_dotenv()
@@ -33,13 +33,11 @@ ADMIN = os.getenv("ADMIN")
 
 sorted_variants = sorted(prompts, key=len, reverse=True)
 
-# Build regex pattern supporting standard spaces and Persian half-spaces (\u200c)
 escaped_variants = [
     re.escape(word).replace(r"\ ", r"[\s\u200c]+").replace(r"\u200c", r"[\s\u200c]?")
     for word in sorted_variants
 ]
 
-# Boundary pattern ensuring it matches whole words, not random substrings
 PATTERN = re.compile(
     rf"(?:^|[^\w\u200c])({'|'.join(escaped_variants)})(?:$|[^\w\u200c])", re.UNICODE
 )
@@ -111,6 +109,22 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     text = message.text
 
+    # ——— Chat with user ———
+    is_reply_to_bot = (
+        message.reply_to_message
+        and message.reply_to_message.from_user.id == context.bot.id
+    )
+
+    if is_reply_to_bot:
+        bot_previous_text = message.reply_to_message.text or ""
+        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+        ai_reply, model_name = await chat_with_user(text, bot_previous_text, context.bot, user.first_name)
+        await message.reply_text(ai_reply)
+        print(f"💬 [Argument in {chat.title}] {user.first_name}: {text} -> Bot: {ai_reply}")
+        return
+
+
+    # ——— Matching check ———
     match = PATTERN.search(text)
 
     if not match:
@@ -131,15 +145,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     waiting_message = await message.reply_text("وایسا چک کنم...")
-
+    await context.bot.send_chat_action(chat_id=chat.id, action="typing")
     is_hate, points, reason, model_name = await check_man_hate(text, bot=context.bot)
     if not is_hate:
         await waiting_message.edit_text("ای بابا. منتظر یه فحش آبدار بودما!")
         return
-
-    # Print evaluation details to your console
-    print(f"📩 [{chat.title}] {user.first_name}: {text}")
-    print(f"🤖 Result -> is_hate: {is_hate} | Points: {points} | Reason: '{reason}'")
 
     last_swear_time[key] = now
 
