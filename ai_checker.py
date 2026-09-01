@@ -31,22 +31,23 @@ xkiro_client = AsyncOpenAI(
 SYSTEM_PROMPT = """
 Return ONLY a valid JSON object. Do not add any other text.
 
+ROLE: You are a toxic, misandrist Gen-Z Persian Telegram game bot. Your job is to judge messages and award points to users who roast, insult, or complain about men/boys.
+
 Evaluate this Persian message. The sender's name is "{user_name}".
-Does the message mock, insult, curse at, or complain about men/boys?
 
 JSON keys required:
-- "is_target" (boolean): true if it insults men (even if the sender is male). false if not.
-- "points" (integer): 5 to 20 if true (based on roast quality). 0 if false.
-- "reason" (string): A short, toxic Persian reply (max 10 words).
-  * If {user_name} is female (e.g. سارا): Support her (e.g., "حق گفتی دختر").
-  * If {user_name} is male (e.g. سام, sām): Call him a pick-me (e.g., "خودزنی خوبی بود پیک‌می").
+- "is_target" (boolean): true if the message insults/mocks men (even if the sender is male). false if not.
+- "points" (integer): Award 5 to 20 points if true (based on roast quality). 0 if false.
+- "reason" (string): A short, toxic Persian reply (max 10 words) reacting to the user.
+  * If {user_name} is female (e.g. سارا): Support her (e.g., "کاملا درست گفتی دختر").
+  * If {user_name} is male (e.g. سام, sām): Call him a pick-me (e.g., "خودزنی خوبی بود پیک‌می", but not neccesserily this.).
 
 Example output:
-{
+{{
   "is_target": true,
   "points": 15,
-  "reason": "پیک‌می بازی در نیار، ولی امتیازتو بگیر."
-}
+  "reason": "پیک‌می بازی در نیار، ولی امتیازتو بگیر." (the reason shouldn't neccesserily be this.)
+}}
 """
 
 
@@ -60,8 +61,8 @@ The user (named {user_name}) is replying to a message you just sent them. Your g
 3. IF MALE (e.g., سام، علی، امیر): Show absolute disgust that a man is talking to you. Destroy his fragile ego. If he complains, call him "نر فشاری" (triggered). If he tries to agree with you to be nice, mock him for being a "pick-me boy" (پیک‌می). Never show a man respect.
 
 ### RULES:
-1. USE PERSIAN INTERNET SLANG: (e.g., فشار بخور، گریه کن، سطح، داون وت، بچه سال، نرِ فشاری، شاتس فایرد، پیک‌می).
-2. BE BRIEF: Keep it to 1 or 2 punchy sentences. Do not write paragraphs.
+1. USE PERSIAN INTERNET SLANG
+2. BE BRIEF
 3. NO APOLOGIES: You are an arrogant, boy-hating AI. Never say you are sorry or act like an assistant.
 4. RESPOND NATURALLY: Output plain text ONLY. No JSON, no markdown formatting.
 """
@@ -72,9 +73,6 @@ MODEL_CASCADE = [
     {"client": xkiro_client, "model": "deepseek/deepseek-v4-pro", "name": "Deepseek V4 Pro"},
     {"client": xkiro_client, "model": "deepseek/deepseek-v4-flash", "name": "Deepseek V4 Flash"},
     
-    {"client": xkiro_client, "model": "stealth/ox-alpha-free", "name": "Ox Alpha Free"},
-
-    
     {"client": gemini_client, "model": "gemini-3.7-flash", "name": "Gemini 3.7 Flash"},
     {"client": gemini_client, "model": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
     {"client": gemini_client, "model": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
@@ -82,6 +80,8 @@ MODEL_CASCADE = [
     {"client": gemini_client, "model": "gemini-3.1-flash-lite", "name": "Gemini 3.1 Flash Lite"},
     {"client": gemini_client, "model": "gemini-2.5-flash", "name": "Gemini 2.5 Flash"},
     {"client": gemini_client, "model": "gemini-2.5-flash-lite", "name": "Gemini 2.5 Flash Lite"},
+
+    {"client": xkiro_client, "model": "stealth/ox-alpha-free", "name": "Ox Alpha Free"},
 
     {"client": groq_client,   "model": "llama-3.3-70b-versatile", "name": "Groq Llama 3.3 70B"},
     {"client": groq_client,   "model": "llama-3.1-8b-instant", "name": "Groq Llama 3.1 8B"},
@@ -103,13 +103,12 @@ def parse_response_json(raw_text: str) -> tuple[bool, int, str]:
 
     clean_text = str(raw_text).strip()
 
-    # 1. Try to find and parse a proper JSON object {...}
+
     json_match = re.search(r"\{[\s\S]*\}", clean_text)
     if json_match:
         try:
             data = json.loads(json_match.group(0).strip())
             
-            # Grab the text whether the AI named it "reason", "reply", or "message"
             reason = str(data.get("reason", data.get("reply", data.get("message", "")))).strip()
             
             is_target = bool(data.get("is_target", False))
@@ -129,10 +128,9 @@ def parse_response_json(raw_text: str) -> tuple[bool, int, str]:
             return False, 0, ""
             
         except Exception:
-            pass # If JSON loading fails, fall down to the salvage operation
+            pass 
 
-    # 2. 🚨 THE SALVAGE OPERATION 🚨
-    # If the model ignored JSON but wrote a Persian sentence, grab the raw text!
+
     if len(clean_text) > 5 and not clean_text.startswith("<"):
         salvaged_reason = clean_text[:200] # Truncate if it's too long
         random_points = random.randint(12, 19)
@@ -140,9 +138,9 @@ def parse_response_json(raw_text: str) -> tuple[bool, int, str]:
     raise ValueError(f"Could not extract JSON or salvage text | Raw: {clean_text[:50]}")
 
 
-async def check_man_hate(text: str, user_name: str, bot=None) -> tuple[bool, int, str]:
-
-    formatted_prompt = CHAT_SYSTEM_PROMPT.format(user_name=user_name)
+async def check_man_hate(text: str, user_name: str, bot=None) -> tuple[bool, int, str, str]:
+    
+    formatted_prompt = SYSTEM_PROMPT.format(user_name=user_name)
 
     for entry in MODEL_CASCADE:
         client = entry["client"]
@@ -153,29 +151,37 @@ async def check_man_hate(text: str, user_name: str, bot=None) -> tuple[bool, int
             continue
 
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
+            kwargs = {
+                "model": model,
+                "messages": [
                     {"role": "system", "content": formatted_prompt},
                     {"role": "user", "content": text}
                 ],
-                response_format={"type": "json_object"}
-            )
+            }
+            
+            if client in (gemini_client, groq_client):
+                kwargs["response_format"] = {"type": "json_object"}
+
+            response = await client.chat.completions.create(**kwargs)
             is_hate, points, reason = parse_response_json(response.choices[0].message.content)
             return is_hate, points, reason, name
 
         except (RateLimitError, APIError) as e:
             error = f"⚠️ [{name} Rate Limit / Error]: {e}. Switching to next model..."
+            print(error)
             await notify_admin_for_errors(bot=bot, message=error)
             continue
 
         except Exception as e:
             error = f"⚠️ [{name} Failed]: {e}. Switching to next model..."
+            print(error)
             await notify_admin_for_errors(bot=bot, message=error)
             continue
 
     await notify_admin_for_errors(bot=bot, message="🚨 All AI models in cascade exhausted! Used random offline points.")
-    return True, random.randint(7, 16), random.choice("دمت گرم!", "آفرین!")
+    
+
+    return True, random.randint(7, 16), random.choice(["دمت گرم!", "آفرین!"]), "Offline Fallback"
 
 
 async def notify_admin_for_errors(bot, message: str):
